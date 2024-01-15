@@ -3,13 +3,13 @@
 //
 #ifndef CHATLLM_CPP_CHATLLM_H
 #define CHATLLM_CPP_CHATLLM_H
+#include "sentencepiece_processor.h"
 #include <ggml.h>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <sys/mman.h>
-#include "sentencepiece_processor.h"
 #include <thread>
 
 namespace chatllm {
@@ -227,6 +227,70 @@ namespace chatllm {
         RMSNorm ln_f;
     };
 
+
+    class BaseStreamer{
+    public:
+        virtual ~BaseStreamer() = default;
+        virtual auto put(const std::vector<int> &output_ids) -> void = 0;
+        virtual auto end() -> void = 0;
+    };
+
+    class StreamerGroup : public BaseStreamer {
+    public:
+        StreamerGroup(std::vector<std::shared_ptr<BaseStreamer>> streamers) : streamers_(std::move(streamers)) {}
+        auto put(const std::vector<int> &output_ids) -> void override;
+        auto end() -> void override;
+
+    private:
+        std::vector<std::shared_ptr<BaseStreamer>> streamers_;
+    };
+
+// reference: https://github.com/huggingface/transformers/blob/main/src/transformers/generation/streamers.py
+    class TextStreamer : public BaseStreamer {
+    public:
+        TextStreamer(std::ostream &os, SPTokenizer *tokenizer)
+                : os_(os), tokenizer_(tokenizer), is_prompt_(true), print_len_(0) {}
+        auto put(const std::vector<int> &output_ids) -> void override;
+        auto end() -> void override;
+
+    private:
+        std::ostream &os_;
+        SPTokenizer *tokenizer_;
+        bool is_prompt_;
+        std::vector<int> token_cache_;
+        int print_len_;
+    };
+
+    class PerfStreamer : public BaseStreamer {
+    public:
+        PerfStreamer() : start_us_(0), prompt_us_(0), end_us_(0), num_prompt_tokens_(0), num_output_tokens_(0) {}
+
+        auto put(const std::vector<int> &output_ids) -> void override;
+        auto end() -> void override { end_us_ = ggml_time_us(); }
+
+        auto reset() -> void;
+        auto to_string() -> std::string const;
+
+        auto num_prompt_tokens() const -> int64_t { return num_prompt_tokens_; }
+        auto prompt_total_time_us() const -> int64_t { return prompt_us_ - start_us_; }
+        auto prompt_token_time_us() const -> int64_t {
+            return num_prompt_tokens() ? prompt_total_time_us() / num_prompt_tokens() : 0;
+        }
+        auto num_output_tokens() const -> int64_t { return num_output_tokens_; }
+        auto output_total_time_us() const -> int64_t { return end_us_ - prompt_us_; }
+        auto output_token_time_us() const -> int64_t {
+            return num_output_tokens() ? output_total_time_us() / num_output_tokens() : 0;
+        }
+
+    private:
+        int64_t start_us_;
+        int64_t prompt_us_;
+        int64_t end_us_;
+        int64_t num_prompt_tokens_;
+        int64_t num_output_tokens_;
+    };
+
+
     class ChatllmForCausalLM {
     public:
         ChatllmForCausalLM(const Config &config);
@@ -241,7 +305,8 @@ namespace chatllm {
 
         auto generate(
                 const std::vector<int> &input_ids,
-                const Config &gen_config
+                const Config &gen_config,
+                BaseStreamer *streamer
         ) -> std::vector<int>;
 
         // logits processor
@@ -269,6 +334,12 @@ namespace chatllm {
         ModelContext ctx_;
         std::vector<std::pair<std::string, ggml_tensor *>> state_dict_;
     };
+
+
+
+
+
+
 
 
 }

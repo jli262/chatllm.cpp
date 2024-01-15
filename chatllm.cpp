@@ -15,6 +15,92 @@ using namespace chatllm;
 
 #define MAX_NODES 8192
 
+// ===== streamer =====
+
+auto StreamerGroup::put(const std::vector<int_least32_t> &output_ids) -> void {
+    for (auto &streamer : streamers_) {
+        streamer->put(output_ids);
+    }
+}
+
+auto StreamerGroup::end() -> void {
+    for (auto &streamer : streamers_) {
+        streamer->end();
+    }
+}
+
+auto TextStreamer::put(const std::vector<int> &output_ids) -> void {
+    if (is_prompt_) {
+        is_prompt_ = false;
+        return;
+    }
+
+    static const std::vector<char> puncts{',', '!', ':', ';', '?'};
+
+    token_cache_.insert(token_cache_.end(), output_ids.begin(), output_ids.end());
+    std::string text = tokenizer_->tokenizer.DecodeIds(token_cache_);
+    if (text.empty()) {
+        return;
+    }
+
+    std::string printable_text;
+    if (text.back() == '\n') {
+        // flush the cache after newline
+        printable_text = text.substr(print_len_);
+        token_cache_.clear();
+        print_len_ = 0;
+    } else if (std::find(puncts.begin(), puncts.end(), text.back()) != puncts.end()) {
+        // last symbol is a punctuation, hold on
+    } else if (text.size() >= 3 && text.compare(text.size() - 3, 3, "�") == 0) {
+        // ends with an incomplete token, hold on
+    } else {
+        printable_text = text.substr(print_len_);
+        print_len_ = text.size();
+    }
+
+    os_ << printable_text << std::flush;
+}
+
+auto TextStreamer::end() -> void {
+    std::string text = tokenizer_->tokenizer.DecodeIds(token_cache_);
+    os_ << text.substr(print_len_) << std::endl;
+    is_prompt_ = true;
+    token_cache_.clear();
+    print_len_ = 0;
+}
+
+auto PerfStreamer::put(const std::vector<int> &output_ids) -> void {
+    if (num_prompt_tokens_ == 0) {
+        // before prompt eval
+        start_us_ = ggml_time_us();
+        num_prompt_tokens_ = output_ids.size();
+    } else {
+        if (num_output_tokens_ == 0) {
+            // first new token
+            prompt_us_ = ggml_time_us();
+        }
+        num_output_tokens_ += output_ids.size();
+    }
+}
+
+auto PerfStreamer::reset() -> void {
+    start_us_ = prompt_us_ = end_us_ = 0;
+    num_prompt_tokens_ = num_output_tokens_ = 0;
+}
+
+auto PerfStreamer::to_string() -> std::string const {
+    std::ostringstream oss;
+    oss << "prompt time: " << prompt_total_time_us() / 1000.f << " ms / " << num_prompt_tokens() << " tokens ("
+        << prompt_token_time_us() / 1000.f << " ms/token)\n"
+        << "output time: " << output_total_time_us() / 1000.f << " ms / " << num_output_tokens() << " tokens ("
+        << output_token_time_us() / 1000.f << " ms/token)\n"
+        << "total time: " << (prompt_total_time_us() + output_total_time_us()) / 1000.f << " ms";
+    return oss.str();
+}
+
+
+
+
 // Adapted from https://github.com/ggerganov/llama.cpp/blob/master/llama.cpp
 auto chatllm::ggml_graph_compute_helper(std::vector<uninitialized_char> &buf, ggml_cgraph *graph, int n_threads) -> void {
     struct ggml_cplan plan = ggml_graph_plan(graph, n_threads);
@@ -450,7 +536,8 @@ auto ChatllmForCausalLM::sampling_softmax_inplace(
 
 auto ChatllmForCausalLM::generate(
         const std::vector<int> &input_ids,
-        const Config &gen_config
+        const Config &gen_config,
+        BaseStreamer *streamer
 ) -> std::vector<int> {
     std::vector<int> output_ids;
     output_ids.reserve(gen_config.model_max_length);
@@ -464,6 +551,11 @@ auto ChatllmForCausalLM::generate(
 //        std::cout << next_token_id << " " << std::endl;
         n_past = output_ids.size();
         output_ids.emplace_back(next_token_id);
+
+        if (streamer) {
+            streamer->put({next_token_id});
+        }
+
         if (next_token_id == config.eos_token_id || next_token_id == config.bos_token_id) {
             break;
         }
