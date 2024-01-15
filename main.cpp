@@ -20,7 +20,7 @@ int main(){
     chatllm::SPTokenizer sptokenizer;
     sptokenizer.tokenizer.Load(config.tokenizer_path);
     int64_t start_us_ = ggml_time_us();
-    config.prompt = "噫吁嚱，危乎高哉，蜀道之难，难于上青天。蚕丛及鱼凫，开国何茫然。尔来四万八千岁，不与秦塞通人烟。西当太白有鸟道，可以横绝峨眉巅。地崩山摧壮士死，然后天梯石栈相钩连。上有六龙回日之高标，下有冲波逆折之回川。";
+    config.prompt = "现代社会如何看待“苟利国家生死以”？";
     std::vector<int> input_ids = sptokenizer.tokenizer.EncodeAsIds(config.prompt);
     input_ids.insert(input_ids.begin(), config.user_token_id);
     input_ids.insert(input_ids.end(), config.assistant_token_id);
@@ -28,7 +28,7 @@ int main(){
     std::vector<int> new_output_ids(output_ids.begin() + input_ids.size(), output_ids.end());
     std::string output = sptokenizer.tokenizer.DecodeIds(output_ids);
     int64_t end_us_ = ggml_time_us();
-    std::cout << "The time of generating: " << output.c_str() << "is " << (end_us_ - start_us_) / 1000.f << "with time per token: " <<(end_us_ - start_us_) / 1000.f / output_ids.size()<< std::endl;
+    std::cout << "The time of generating: \"" << output.c_str() << "\" is " << (end_us_ - start_us_) / 1000.f << " with time per token: " <<(end_us_ - start_us_) / 1000.f / output_ids.size()<< std::endl;
 
     return 0;
 }
