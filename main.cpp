@@ -74,7 +74,7 @@ int main(){
         perf_streamer->reset();
     }
 //    int64_t start_us_ = ggml_time_us();
-//    config.prompt = "现代社会如何看待“苟利国家生死以”？";
+//    config.prompt = "介绍一下你自己。";
 //    std::vector<int> input_ids = sptokenizer.tokenizer.EncodeAsIds(config.prompt);
 //    input_ids.insert(input_ids.begin(), config.user_token_id);
 //    input_ids.insert(input_ids.end(), config.assistant_token_id);
